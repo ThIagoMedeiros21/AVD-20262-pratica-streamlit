@@ -52,11 +52,12 @@ with st.sidebar:
         minimo = math.floor(df[var].min() * 10) / 10
         maximo = math.ceil(df[var].max() * 10) / 10
         intervalos[var] = st.slider(
-            f"Intervalo de {NOMES[var].lower()}",
+            f"Intervalo de {NOMES[var][0].lower()}{NOMES[var][1:]}",  # minúscula só na 1ª letra (mantém o "kWh")
             min_value=minimo,
             max_value=maximo,
             value=(minimo, maximo),
             step=0.1,
+            format="%.1f",
             key=f"intervalo_{var}",
         )
 
@@ -82,6 +83,11 @@ LEGENDA_CLASSE = "**Período do dia**  \n" + "  \n".join(
 )
 
 
+def numero_br(expressao, formato):
+    """Expressão Vega que formata um número no padrão brasileiro (1.234,5), trocando ponto e vírgula."""
+    return f"replace(replace(replace(format({expressao}, '{formato}'), ',', '_'), '.', ','), '_', '.')"
+
+
 def contar_por_faixa(dados, var, n_faixas=20):
     """Conta as sessões por faixa de `var` (e por período, se pedido) em pandas.
 
@@ -94,6 +100,9 @@ def contar_por_faixa(dados, var, n_faixas=20):
     contagem = dados.groupby(grupos).size().rename("sessoes").reset_index()
     contagem["inicio"] = bordas[contagem["faixa"]]
     contagem["fim"] = bordas[contagem["faixa"] + 1]
+    # Textos prontos para o tooltip, já no padrão brasileiro
+    contagem["faixa_texto"] = [f"{a:.1f} a {b:.1f}".replace(".", ",") for a, b in zip(contagem["inicio"], contagem["fim"])]
+    contagem["sessoes_texto"] = contagem["sessoes"].map(lambda n: f"{n:,}".replace(",", "."))
     return contagem
 
 
@@ -119,13 +128,20 @@ with col_correlacao:
         nomes = [NOMES[var] for var in variaveis]
         ordem = {nome: i for i, nome in enumerate(nomes)}
         corr = corr[corr["var_y"].map(ordem) > corr["var_x"].map(ordem)]
+        corr["correlacao_texto"] = corr["correlacao"].map(lambda r: f"{r:.2f}".replace(".", ","))
 
         base = alt.Chart(corr).encode(
             x=alt.X(
                 "var_x:N",
                 title=None,
                 sort=nomes[:-1],  # a última variável só aparece nas linhas
-                axis=alt.Axis(labelAngle=0, labelFontSize=13, labelLimit=200),
+                # Quebra o nome antes da unidade ("Hora de conexão" / "(h)") para os rótulos não se encostarem
+                axis=alt.Axis(
+                    labelAngle=0,
+                    labelFontSize=13,
+                    labelLimit=200,
+                    labelExpr="split(replace(datum.label, ' (', '|('), '|')",
+                ),
             ),
             y=alt.Y(
                 "var_y:N",
@@ -139,16 +155,16 @@ with col_correlacao:
                 "correlacao:Q",
                 title="Spearman",
                 scale=alt.Scale(scheme="redblue", domain=[-1, 1], reverse=True),
-                legend=alt.Legend(titleFontSize=14, labelFontSize=13),
+                legend=alt.Legend(titleFontSize=14, labelFontSize=13, labelExpr=numero_br("datum.value", ".1f")),
             ),
             tooltip=[
                 alt.Tooltip("var_x", title="Variável"),
                 alt.Tooltip("var_y", title="Variável"),
-                alt.Tooltip("correlacao:Q", title="Spearman", format=".2f"),
+                alt.Tooltip("correlacao_texto:N", title="Spearman"),
             ],
         )
         valores = base.mark_text(fontSize=16).encode(
-            text=alt.Text("correlacao:Q", format=".2f"),
+            text=alt.Text("correlacao_texto:N"),
             color=alt.condition(
                 "abs(datum.correlacao) > 0.5", alt.value("white"), alt.value("black")
             ),
@@ -177,17 +193,25 @@ with col_distribuicao:
             colunas = st.columns(2)
             for coluna, var in zip(colunas, variaveis[inicio : inicio + 2]):
                 tooltip_faixa = [
-                    alt.Tooltip("inicio:Q", title="De", format=".1f"),
-                    alt.Tooltip("fim:Q", title="Até", format=".1f"),
-                    alt.Tooltip("sessoes:Q", title="Sessões", format=",d"),
+                    alt.Tooltip("faixa_texto:N", title=NOMES[var]),
+                    alt.Tooltip("sessoes_texto:N", title="Sessões"),
                 ]
                 histograma = (
                     alt.Chart(contar_por_faixa(df_filtrado, var))
                     .mark_bar()
                     .encode(
-                        x=alt.X("inicio:Q", bin="binned", title=NOMES[var]),
+                        x=alt.X(
+                            "inicio:Q",
+                            bin="binned",
+                            title=NOMES[var],
+                            axis=alt.Axis(labelExpr=numero_br("datum.value", "~g")),
+                        ),
                         x2="fim:Q",
-                        y=alt.Y("sessoes:Q", title="Sessões"),
+                        y=alt.Y(
+                            "sessoes:Q",
+                            title="Sessões",
+                            axis=alt.Axis(labelExpr=numero_br("datum.value", ",d")),
+                        ),
                         tooltip=tooltip_faixa,
                     )
                     .properties(height=200)
