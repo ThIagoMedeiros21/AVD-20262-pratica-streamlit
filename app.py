@@ -1,76 +1,101 @@
+import math
+
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from src.data_loader import load_data
 
 st.set_page_config(
-    page_title="Avaliação de Correlação entre Variáveis Quantitativas do Heart Disease Dataset",
+    page_title="Recarga de veículos elétricos",
     layout="wide",
 )
 
-st.title("Avaliação de Correlação entre Variáveis Quantitativas do Heart Disease Dataset")
+st.title("Avaliação de correlação entre variáveis quantitativas do EV Charging Dataset")
 
 df = load_data()
 
 # Variáveis quantitativas do estudo (mesma lista VARS_QUANT do notebook de EDA)
-VARS_QUANT = ["age", "trestbps", "chol", "thalach", "oldpeak"]
+VARS_QUANT = ["hora_conexao", "duracao_carga_h", "energia_kwh"]
+NOMES = {
+    "hora_conexao": "Hora de conexão (h)",
+    "duracao_carga_h": "Duração da carga (h)",
+    "energia_kwh": "Energia entregue (kWh)",
+}
+
+# Classe usada para colorir a distribuição: período do dia da conexão (ordem cronológica)
+CLASSE = "periodo_dia"
+ORDEM_PERIODO = ["Madrugada", "Manhã", "Tarde", "Noite"]
 
 # Sidebar: filtros (variáveis + intervalo)
 with st.sidebar:
     st.header("Filtros")
 
     variaveis = st.multiselect(
-        "Variáveis Quantitativas",
+        "Variáveis quantitativas",
         options=VARS_QUANT,
         default=VARS_QUANT,
+        format_func=NOMES.get,
         help="Selecione as variáveis quantitativas que deseja analisar no dashboard.",
     )
 
     separar_por_classe = st.toggle(
-        "Distinguir por Classe",
+        "Distinguir por período do dia",
         value=False,
-        help="Colore a distribuição pela classe (doenca_cardiaca: Normal ou Cardíaco).",
+        help="Colore a distribuição pelo período do dia da conexão (Madrugada, Manhã, Tarde ou Noite).",
     )
 
-    # Um slider de intervalo para cada variável selecionada
+    # Um slider de intervalo para cada variável selecionada (limites arredondados para fora, passo de 0,1)
     intervalos = {}
     for var in variaveis:
-        if pd.api.types.is_integer_dtype(df[var]):
-            minimo, maximo, passo = int(df[var].min()), int(df[var].max()), 1
-        else:
-            minimo, maximo, passo = float(df[var].min()), float(df[var].max()), 0.1
+        minimo = math.floor(df[var].min() * 10) / 10
+        maximo = math.ceil(df[var].max() * 10) / 10
         intervalos[var] = st.slider(
-            f"Intervalo de {var}",
+            f"Intervalo de {NOMES[var].lower()}",
             min_value=minimo,
             max_value=maximo,
             value=(minimo, maximo),
-            step=passo,
+            step=0.1,
             key=f"intervalo_{var}",
         )
 
-# Mantém só os pacientes dentro de todos os intervalos escolhidos
+# Mantém só as sessões dentro de todos os intervalos escolhidos
 df_filtrado = df
 for var, (inicio, fim) in intervalos.items():
     df_filtrado = df_filtrado[df_filtrado[var].between(inicio, fim)]
 
-st.caption(f"{len(df_filtrado)} de {len(df)} pacientes dentro dos intervalos escolhidos.")
+st.caption(f"{len(df_filtrado):,} de {len(df):,} sessões dentro dos intervalos escolhidos.".replace(",", "."))
 
 # Dashboard 1: correlação (heatmap) à esquerda, distribuição (histograma) à direita
 col_correlacao, col_distribuicao = st.columns([1, 1.5])
 
-# Cores do histograma, em tons de sangue: vermelho arterial para Cardíaco, rosa claro para Normal
-COR_NORMAL = "#f4a6a6"
-COR_CARDIACO = "#c1121f"
-COR_HISTOGRAMA = COR_CARDIACO
-CORES_CLASSE = alt.Scale(domain=["Normal", "Cardíaco"], range=[COR_NORMAL, COR_CARDIACO])
+# Cor do histograma sem classe: mesmo vermelho de destaque do tema (.streamlit/config.toml)
+COR_HISTOGRAMA = "#c1121f"
+# Uma cor por período, na ordem categórica fixa da paleta de referência (azul, laranja, aqua, amarelo)
+CORES_PERIODO = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+CORES_CLASSE = alt.Scale(domain=ORDEM_PERIODO, range=CORES_PERIODO)
 
 # Legenda das classes em texto, para caber no espaço livre da grade de histogramas
-LEGENDA_CLASSE = (
-    f"**Classe**  \n"
-    f":color[■]{{foreground=\"{COR_NORMAL}\"}} Normal  \n"
-    f":color[■]{{foreground=\"{COR_CARDIACO}\"}} Cardíaco"
+LEGENDA_CLASSE = "**Período do dia**  \n" + "  \n".join(
+    f":color[■]{{foreground=\"{cor}\"}} {periodo}" for periodo, cor in zip(ORDEM_PERIODO, CORES_PERIODO)
 )
+
+
+def contar_por_faixa(dados, var, n_faixas=20):
+    """Conta as sessões por faixa de `var` (e por período, se pedido) em pandas.
+
+    Com 100 mil sessões, mandar as linhas cruas para o Altair pesaria o navegador:
+    só as contagens por faixa vão para o gráfico.
+    """
+    bordas = np.histogram_bin_edges(dados[var], bins=n_faixas)
+    faixa = pd.cut(dados[var], bins=bordas, include_lowest=True, labels=False).rename("faixa")
+    grupos = [faixa, dados[CLASSE]] if separar_por_classe else [faixa]
+    contagem = dados.groupby(grupos).size().rename("sessoes").reset_index()
+    contagem["inicio"] = bordas[contagem["faixa"]]
+    contagem["fim"] = bordas[contagem["faixa"] + 1]
+    return contagem
+
 
 with col_correlacao:
     st.subheader("Correlação (Spearman)")
@@ -78,11 +103,12 @@ with col_correlacao:
     if len(variaveis) < 2:
         st.warning("Selecione pelo menos 2 variáveis para calcular a correlação.")
     elif len(df_filtrado) < 30:
-        st.warning("Poucos pacientes nos intervalos escolhidos para calcular a correlação.")
+        st.warning("Poucas sessões nos intervalos escolhidos para calcular a correlação.")
     else:
         # Matriz de correlação de Spearman das variáveis selecionadas, em formato longo (uma linha por célula)
         corr = (
             df_filtrado[variaveis]
+            .rename(columns=NOMES)
             .corr(method="spearman")
             .rename_axis(index="var_y", columns="var_x")
             .stack()
@@ -90,17 +116,23 @@ with col_correlacao:
             .reset_index()
         )
         # Só o triângulo inferior, sem a diagonal (sempre 1): a matriz é simétrica, o resto é repetição
-        ordem = {var: i for i, var in enumerate(variaveis)}
+        nomes = [NOMES[var] for var in variaveis]
+        ordem = {nome: i for i, nome in enumerate(nomes)}
         corr = corr[corr["var_y"].map(ordem) > corr["var_x"].map(ordem)]
 
         base = alt.Chart(corr).encode(
             x=alt.X(
                 "var_x:N",
                 title=None,
-                sort=variaveis[:-1],  # a última variável só aparece nas linhas
-                axis=alt.Axis(labelAngle=0, labelFontSize=14),
+                sort=nomes[:-1],  # a última variável só aparece nas linhas
+                axis=alt.Axis(labelAngle=0, labelFontSize=13, labelLimit=200),
             ),
-            y=alt.Y("var_y:N", title=None, sort=variaveis[1:], axis=alt.Axis(labelFontSize=14)),  # a primeira só nas colunas
+            y=alt.Y(
+                "var_y:N",
+                title=None,
+                sort=nomes[1:],  # a primeira só nas colunas
+                axis=alt.Axis(labelFontSize=13, labelLimit=200),
+            ),
         )
         heatmap = base.mark_rect().encode(
             color=alt.Color(
@@ -109,7 +141,11 @@ with col_correlacao:
                 scale=alt.Scale(scheme="redblue", domain=[-1, 1], reverse=True),
                 legend=alt.Legend(titleFontSize=14, labelFontSize=13),
             ),
-            tooltip=["var_x", "var_y", alt.Tooltip("correlacao:Q", format=".2f")],
+            tooltip=[
+                alt.Tooltip("var_x", title="Variável"),
+                alt.Tooltip("var_y", title="Variável"),
+                alt.Tooltip("correlacao:Q", title="Spearman", format=".2f"),
+            ],
         )
         valores = base.mark_text(fontSize=16).encode(
             text=alt.Text("correlacao:Q", format=".2f"),
@@ -130,7 +166,7 @@ with col_distribuicao:
     if not variaveis:
         st.warning("Selecione pelo menos 1 variável para ver a distribuição.")
     elif df_filtrado.empty:
-        st.warning("Nenhum paciente dentro dos intervalos escolhidos.")
+        st.warning("Nenhuma sessão dentro dos intervalos escolhidos.")
     else:
         # Com número par de variáveis não sobra espaço na grade: a legenda vai acima dela
         if separar_por_classe and len(variaveis) % 2 == 0:
@@ -140,31 +176,36 @@ with col_distribuicao:
         for inicio in range(0, len(variaveis), 2):
             colunas = st.columns(2)
             for coluna, var in zip(colunas, variaveis[inicio : inicio + 2]):
+                tooltip_faixa = [
+                    alt.Tooltip("inicio:Q", title="De", format=".1f"),
+                    alt.Tooltip("fim:Q", title="Até", format=".1f"),
+                    alt.Tooltip("sessoes:Q", title="Sessões", format=",d"),
+                ]
                 histograma = (
-                    alt.Chart(df_filtrado[[var, "doenca_cardiaca"]])
+                    alt.Chart(contar_por_faixa(df_filtrado, var))
                     .mark_bar()
                     .encode(
-                        x=alt.X(f"{var}:Q", bin=alt.Bin(maxbins=20), title=var),
-                        y=alt.Y("count()", title="Pacientes"),
-                        tooltip=[alt.Tooltip("count()", title="Pacientes")],
+                        x=alt.X("inicio:Q", bin="binned", title=NOMES[var]),
+                        x2="fim:Q",
+                        y=alt.Y("sessoes:Q", title="Sessões"),
+                        tooltip=tooltip_faixa,
                     )
                     .properties(height=200)
                 )
                 if separar_por_classe:
                     histograma = histograma.encode(
-                        color=alt.Color(
-                            "doenca_cardiaca:N",
-                            title="Classe",
-                            scale=CORES_CLASSE,
-                            legend=None,
-                        ),
-                        tooltip=["doenca_cardiaca", alt.Tooltip("count()", title="Pacientes")],
+                        color=alt.Color(f"{CLASSE}:N", title="Período do dia", scale=CORES_CLASSE, legend=None),
+                        # Empilha na ordem cronológica, de baixo para cima
+                        order=alt.Order("ordem_periodo:Q"),
+                        tooltip=[alt.Tooltip(f"{CLASSE}:N", title="Período")] + tooltip_faixa,
+                    ).transform_calculate(
+                        ordem_periodo=f"indexof({ORDEM_PERIODO}, datum.{CLASSE})"
                     )
                 else:
                     histograma = histograma.mark_bar(color=COR_HISTOGRAMA)
 
                 with coluna:
-                    st.altair_chart(histograma, width="stretch", alt=f"Histograma da variável {var}")
+                    st.altair_chart(histograma, width="stretch", alt=f"Histograma da variável {NOMES[var]}")
 
             # Número ímpar de variáveis: a legenda ocupa o espaço que sobrou na última linha
             if separar_por_classe and len(colunas) == 2 and len(variaveis[inicio : inicio + 2]) == 1:

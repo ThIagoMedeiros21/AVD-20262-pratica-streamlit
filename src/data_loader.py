@@ -1,7 +1,9 @@
 import pandas as pd
+import streamlit as st
 
 
-# TODO: adicionar @st.cache_data (import streamlit as st) para evitar reler o CSV a cada interação
+# Cacheado: o CSV é lido uma vez só, e não a cada interação com os widgets
+@st.cache_data(max_entries=1)
 def load_data(path="data/clean/dataset.csv"):
     """Lê o dataset já tratado (exportado ao final do notebook de EDA)."""
     return pd.read_csv(path)
