@@ -7,6 +7,25 @@ Repositório-modelo das Aulas 21, 22 e 23: construção de dois dashboards em St
 - Dashboard 1 = correlação + distribuição das variáveis quantitativas
 - Dashboard 2 = KPIs
 
+## Sobre este projeto
+
+**Dataset:** [Electric Vehicle Charging Dataset](https://www.kaggle.com/datasets/mexwell/electric-vehicle-charging-dataset) (Kaggle, `mexwell`), versão **sintética**. Cada linha é uma sessão de recarga de veículo elétrico. É um dataset público e não tem dados pessoais.
+
+| Variável | Tipo | O que é |
+| --- | --- | --- |
+| `hora_conexao` | quantitativa | Hora do dia em que o veículo foi conectado (0 a 24, decimal) |
+| `duracao_carga_h` | quantitativa | Duração da recarga, em horas |
+| `energia_kwh` | quantitativa | Energia entregue na sessão, em kWh |
+| `periodo_dia` | qualitativa | Madrugada, Manhã, Tarde ou Noite, derivada de `hora_conexao` |
+| `tipo_dia` | qualitativa | Dia útil ou fim de semana, **assumido** a partir de `indice_dia` (a EDA mostrou que essa suposição não se sustenta) |
+
+**Notebooks:**
+
+- [notebooks/eda.ipynb](notebooks/eda.ipynb): EDA original da Aula 11, sem alterações.
+- [notebooks/eda-com-downloads.ipynb](notebooks/eda-com-downloads.ipynb): a mesma EDA, com download do dataset via `kagglehub` e exportação para `data/clean/dataset.csv`.
+
+**Amostra:** a base completa tem cerca de 1,96 milhão de sessões (o CSV bruto tem cerca de 120 MB). Como o GitHub recusa arquivos acima de 100 MB e o Streamlit Community Cloud tem pouca memória, o `data/clean/dataset.csv` é uma **amostra aleatória de 100 mil sessões** (`random_state=42`). A EDA não removeu nenhuma sessão, então a amostra representa a base inteira.
+
 ## Setup
 
 Requer **Python 3.11 a 3.15**. Confira a sua versão antes de começar:
@@ -48,6 +67,7 @@ streamlit run app.py
 - **Windows: "a execução de scripts foi desabilitada" ao ativar no PowerShell:** rode uma vez `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, ou use o cmd.
 - **Python fora de 3.11–3.15:** instale uma versão compatível em [python.org](https://www.python.org/downloads/) e crie o venv com ela, como no exemplo acima.
 - **Apareceu `ModuleNotFoundError` ou `streamlit: command not found`:** o venv provavelmente não está ativo. Ative de novo e confira o `(.venv)` no prompt.
+- **`No module named streamlit` e `No module named pip` com o `(.venv)` ativo:** o venv foi criado com outra versão do Python. Isso acontece, por exemplo, quando o Fedora atualiza o `python3` de 3.13 para 3.14. Recrie o venv com `python3 -m venv --clear .venv`, ative de novo e reinstale com `python -m pip install -r requirements.txt`.
 - **Erro de certificado no `pip install` (macOS, Python do python.org):** rode `Install Certificates.command`, na pasta Python 3.X em Aplicativos.
 - **`DatasetNotFoundError` ao baixar o dataset no notebook (macOS, Python do python.org):** é o mesmo problema de certificado SSL (o `pandas` não consegue ler o CSV da UCI). Rode `Install Certificates.command` e reinicie o kernel. O notebook `eda-com-downloads.ipynb` já define `SSL_CERT_FILE` com o `certifi` como contorno.
 
